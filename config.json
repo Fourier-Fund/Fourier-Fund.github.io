@@ -1,0 +1,18 @@
+{
+  "fund_name": "Fourier Fund",
+  "inception_date": "2026-09-02",
+  "initial_capital": 150000,
+  "whole_shares": true,
+  "risk_free_rate": 0.04,
+  "placeholder": true,
+  "placeholder_note": "Holdings are simulated from the proposal's target weights at an assumed inception date. Replace data/holdings.csv with actual fills and set \"placeholder\" to false in config.json.",
+  "portfolios": [
+    {"id": "quant",   "name": "Quant Team",    "short": "Quant",   "description": "Eleven equal-weighted ETFs across growth, sector, dividend, gold and Treasury exposures."},
+    {"id": "esg",     "name": "ESG (ESGV)",    "short": "ESG",     "description": "Vanguard ESG U.S. Stock ETF: screened U.S. all-cap equity."},
+    {"id": "analyst", "name": "Analyst Picks", "short": "Analyst", "description": "Twelve equal-weighted stocks selected by Fourier analysts from fundamental research."}
+  ],
+  "benchmarks": [
+    {"id": "sp500tr", "ticker": "^SP500TR", "name": "S&P 500 TR", "primary": true},
+    {"id": "spy",     "ticker": "SPY",      "name": "SPY"}
+  ]
+}

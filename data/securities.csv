@@ -1,0 +1,26 @@
+ticker,name,asset_class
+QQQ,Invesco QQQ ETF,Equity
+XLV,Health Care Select Sector SPDR Fund,Equity
+XLE,Energy Select Sector SPDR Fund,Equity
+XLU,Utilities Select Sector SPDR Fund,Equity
+XLP,Consumer Staples Select Sector SPDR Fund,Equity
+XLK,Technology Select Sector SPDR Fund,Equity
+ITA,iShares U.S. Aerospace & Defense ETF,Equity
+SCHD,Schwab U.S. Dividend Equity ETF,Equity
+GLD,SPDR Gold Shares,Gold
+IEF,iShares 7-10 Year Treasury Bond ETF,Treasury
+TLT,iShares 20+ Year Treasury Bond ETF,Treasury
+ESGV,Vanguard ESG U.S. Stock ETF,Equity
+LEN,Lennar Corporation (Class A),Equity
+QCOM,QUALCOMM Incorporated,Equity
+PINS,"Pinterest, Inc. (Class A)",Equity
+CWT,California Water Service Group,Equity
+SCCO,Southern Copper Corporation,Equity
+LMT,Lockheed Martin Corporation,Equity
+ISRG,"Intuitive Surgical, Inc.",Equity
+DVN,Devon Energy Corporation,Equity
+OMC,Omnicom Group Inc.,Equity
+SOFI,"SoFi Technologies, Inc.",Equity
+MDT,Medtronic plc,Equity
+AVGO,Broadcom Inc.,Equity
+CASH,Cash,Cash
