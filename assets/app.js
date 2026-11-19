@@ -1,9 +1,15 @@
 /* Fourier Fund performance page. Reads data/performance.json (built by
-   scripts/build_data.py) and renders tabs, KPIs, charts and tables. */
+   scripts/build_data.py) and renders the tabs, one return chart and a table. */
 (() => {
   "use strict";
 
   const COLOR_VAR = { total: "--c-total", quant: "--c-quant", esg: "--c-esg", analyst: "--c-analyst" };
+  const BLURB = {
+    total: "All three parts of the fund together.",
+    quant: "Eleven ETFs, equally weighted. Mostly U.S. sector and growth funds, with dividend stocks, gold and Treasuries mixed in to hold up better when stocks fall.",
+    esg: "One fund: Vanguard's ESG U.S. Stock ETF (ESGV). It owns U.S. companies of every size, minus ones in areas like fossil fuels, weapons and tobacco.",
+    analyst: "Twelve stocks, equally weighted. Each one was pitched by an analyst with a written thesis, a valuation, a downside case and a plan for when to sell.",
+  };
   const RANGES = [
     { id: "1M", months: 1 }, { id: "3M", months: 3 }, { id: "6M", months: 6 },
     { id: "YTD" }, { id: "1Y", months: 12 }, { id: "ALL", label: "Since inception" },
@@ -14,10 +20,9 @@
     { c: "--c-bench-2", dash: [4, 3], cls: "dash" },
     { c: "--c-bench", dash: [1, 3], cls: "dot" },
   ];
-  const MIN_STATS_DAYS = 20; // below this, annualized stats are suppressed
+  const MIN_STATS_DAYS = 20; // below this, Sharpe is suppressed
 
-  let D, view = "total", range = "ALL";
-  const charts = {};
+  let D, view = "total", range = "ALL", chart;
 
   // ---------------------------------------------------------------- helpers
   const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -40,26 +45,18 @@
   const tone = (x) => x == null || !isFinite(x) || Math.abs(x) < 5e-5 ? "" : x > 0 ? "up" : "down";
   const fmtDate = (s) => new Date(s + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 
-  function seriesFor(id) {
-    if (D.series[id]) return D.series[id];
-    const b = D.benchmarks.find((x) => x.id === id);
-    return b ? b.series : null;
-  }
   const portName = (id) => id === "total" ? "Total Fund" : D.portfolios.find((p) => p.id === id).name;
   const primaryBench = () => D.benchmarks.find((b) => b.primary) || D.benchmarks[0];
 
-  // start index for a range
   function rangeStart(r) {
     const dates = D.dates, last = new Date(dates[dates.length - 1] + "T12:00:00");
     if (r === "ALL") return 0;
     let cut;
     if (r === "YTD") cut = `${last.getFullYear() - 1}-12-31`;
     else {
-      const m = RANGES.find((x) => x.id === r).months;
-      const c = new Date(last); c.setMonth(c.getMonth() - m);
+      const c = new Date(last); c.setMonth(c.getMonth() - RANGES.find((x) => x.id === r).months);
       cut = c.toISOString().slice(0, 10);
     }
-    // last trading day on/before the cut is the base; null if history too short
     let i = -1;
     for (let k = 0; k < dates.length; k++) if (dates[k] <= cut) i = k;
     return i < 0 ? null : i;
@@ -70,40 +67,35 @@
     if (seg.length < 2) return {};
     const rets = [];
     for (let k = 1; k < seg.length; k++) rets.push(seg[k] / seg[k - 1] - 1);
-    const total = seg[seg.length - 1] / seg[0] - 1;
     let peak = seg[0], mdd = 0;
     for (const v of seg) { peak = Math.max(peak, v); mdd = Math.min(mdd, v / peak - 1); }
-    const out = { total, mdd, n: rets.length };
+    const out = { total: seg[seg.length - 1] / seg[0] - 1, mdd, n: rets.length };
     if (rets.length >= MIN_STATS_DAYS) {
       const mean = rets.reduce((a, b) => a + b, 0) / rets.length;
       const sd = Math.sqrt(rets.reduce((a, b) => a + (b - mean) ** 2, 0) / (rets.length - 1));
-      out.vol = sd * Math.sqrt(252);
       out.sharpe = sd ? ((mean - D.risk_free_rate / 252) / sd) * Math.sqrt(252) : null;
     }
     return out;
   }
 
-  // ---------------------------------------------------------------- chart plugins
+  // ---------------------------------------------------------------- chart
   const crosshair = {
     id: "crosshair",
-    afterDatasetsDraw(chart) {
-      const a = chart.tooltip && chart.tooltip.getActiveElements();
+    afterDatasetsDraw(c) {
+      const a = c.tooltip && c.tooltip.getActiveElements();
       if (!a || !a.length) return;
-      const x = a[0].element.x, { top, bottom } = chart.chartArea, ctx = chart.ctx;
+      const x = a[0].element.x, { top, bottom } = c.chartArea, ctx = c.ctx;
       ctx.save(); ctx.strokeStyle = css("--axis"); ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, top); ctx.lineTo(x, bottom); ctx.stroke(); ctx.restore();
     },
   };
-  // direct end labels, nudged apart so they never overlap
   const endLabels = {
     id: "endLabels",
-    afterDatasetsDraw(chart, _a, opts) {
+    afterDatasetsDraw(c, _a, opts) {
       if (!opts || !opts.enabled) return;
-      const ctx = chart.ctx, items = [];
-      chart.data.datasets.forEach((ds, i) => {
-        const meta = chart.getDatasetMeta(i);
-        if (meta.hidden) return;
-        const pts = meta.data.filter((p, k) => ds.data[k] != null);
+      const ctx = c.ctx, items = [];
+      c.data.datasets.forEach((ds, i) => {
+        const pts = c.getDatasetMeta(i).data.filter((p, k) => ds.data[k] != null);
         const p = pts[pts.length - 1];
         if (p) items.push({ y: p.y, x: p.x, text: ds.label, color: ds.borderColor });
       });
@@ -118,17 +110,17 @@
     },
   };
 
-  function lineChart(canvas, key, datasets, { yFmt = (v) => pct(v, 0), endLbl = false, fill = false } = {}) {
-    if (charts[key]) charts[key].destroy();
-    const ink2 = css("--ink-2"), muted = css("--muted"), grid = css("--grid");
-    charts[key] = new Chart(canvas, {
+  function drawChart(labels, sets) {
+    if (chart) chart.destroy();
+    const wide = innerWidth >= 600, muted = css("--muted");
+    chart = new Chart($("perf-chart"), {
       type: "line",
-      data: { labels: datasets.labels, datasets: datasets.sets },
+      data: { labels, datasets: sets },
       plugins: [crosshair, endLabels],
       options: {
         responsive: true, maintainAspectRatio: false, animation: false,
         interaction: { mode: "index", intersect: false },
-        layout: { padding: { right: endLbl && innerWidth >= 600 ? 92 : 4, top: 6 } },
+        layout: { padding: { right: wide ? 92 : 4, top: 6 } },
         elements: { point: { radius: 0, hoverRadius: 4, hitRadius: 12 }, line: { borderWidth: 2, tension: 0 } },
         scales: {
           x: {
@@ -136,16 +128,14 @@
             ticks: { color: muted, maxRotation: 0, autoSkip: true, maxTicksLimit: 7,
               callback(v) { return fmtDate(this.getLabelForValue(v)).replace(/, \d{4}$/, ""); } },
           },
-          y: {
-            grid: { color: grid }, border: { display: false },
-            ticks: { color: muted, callback: yFmt, maxTicksLimit: 6 },
-          },
+          y: { grid: { color: css("--grid") }, border: { display: false },
+            ticks: { color: muted, callback: (v) => pct(v, 0), maxTicksLimit: 6 } },
         },
         plugins: {
           legend: { display: false },
-          endLabels: { enabled: endLbl && innerWidth >= 600 },
+          endLabels: { enabled: wide },
           tooltip: {
-            backgroundColor: css("--surface"), titleColor: ink2, bodyColor: css("--ink"),
+            backgroundColor: css("--surface"), titleColor: css("--ink-2"), bodyColor: css("--ink"),
             borderColor: css("--border"), borderWidth: 1, padding: 10, boxPadding: 4, usePointStyle: true,
             titleFont: { weight: "normal" }, bodyFont: { weight: "600" },
             callbacks: {
@@ -157,140 +147,103 @@
         },
       },
     });
-    if (fill) charts[key].data.datasets[0].fill = "origin";
-  }
-
-  function legend(node, items) {
-    node.replaceChildren(...items.map((it) =>
-      el("span", {}, el("i", { class: it.cls || "", style: `--k:${it.color}` }), it.label)));
   }
 
   // ---------------------------------------------------------------- render
   function render() {
-    // tabs
     for (const b of document.querySelectorAll(".tab")) {
       b.setAttribute("aria-selected", String(b.dataset.id === view));
       if (b.dataset.id === view) b.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
-    // ranges
-    const i0 = rangeStart(range) ?? 0;
     for (const b of document.querySelectorAll(".range")) {
       b.setAttribute("aria-pressed", String(b.dataset.id === range));
       b.disabled = b.dataset.id !== "ALL" && rangeStart(b.dataset.id) == null;
     }
+    $("blurb").textContent = BLURB[view] || (D.portfolios.find((p) => p.id === view) || {}).description || "";
 
-    const labels = D.dates.slice(i0);
-    const rebase = (s) => { const b = s[i0]; return s.slice(i0).map((v) => v == null || b == null ? null : v / b - 1); };
-    const color = css(COLOR_VAR[view]);
-    const pb = primaryBench();
-    const s = seriesFor(view), st = stats(s, i0), bst = stats(pb.series, i0);
-    const since = stats(s, 0);
+    // order: Total shows performance first; sleeves show holdings first
+    const main = $("main"), perf = $("perf"), table = $("table-card");
+    if (view === "total") main.insertBefore(perf, table); else main.insertBefore(table, perf);
+    $("research-card").hidden = view !== "quant";
 
-    // KPIs
-    const port = D.portfolios.find((p) => p.id === view);
-    const value = view === "total" ? D.fund_value : port.value;
-    const wNote = view === "total" ? `${D.portfolios.length} sleeves`
-      : `${pct(port.weight_fund, 1, false)} of fund · target ${pct(port.target_weight_fund, 0, false)}`;
-    const short = st.n < MIN_STATS_DAYS ? "needs ≥1 month of data" : "annualized";
+    const i0 = rangeStart(range) ?? 0;
+    const series = D.series[view], pb = primaryBench();
+    const st = stats(series, i0), bst = stats(pb.series, i0), since = stats(series, 0);
+
     const kpi = (label, val, cls, sub) => el("div", { class: "kpi" },
       el("p", { class: "label" }, label), el("p", { class: "value " + (cls || "") }, val), el("p", { class: "sub" }, sub));
-    const rLabel = range === "ALL" ? "since inception" : range;
     $("kpis").replaceChildren(
-      kpi(`Return (${rLabel})`, pct(st.total, 2), tone(st.total), range === "ALL" ? `since ${fmtDate(D.inception_date)}` : `since inception ${pct(since.total, 2)}`),
+      kpi(range === "ALL" ? "Return since inception" : `Return (${range})`, pct(st.total, 2), tone(st.total),
+        range === "ALL" ? `since ${fmtDate(D.inception_date)}` : `since inception ${pct(since.total, 2)}`),
       kpi(`vs ${pb.name}`, pct(st.total - bst.total, 2), tone(st.total - bst.total), `${pb.name}: ${pct(bst.total, 2)}`),
-      kpi("Volatility", pct(st.vol, 1, false), "", short),
-      kpi("Sharpe ratio", st.sharpe == null ? "—" : num(st.sharpe), "", short),
       kpi("Max drawdown", pct(st.mdd, 1), tone(st.mdd), `${pb.name}: ${pct(bst.mdd, 1)}`),
-      kpi("Holdings value", money(value), "", wNote),
+      kpi("Sharpe ratio", st.sharpe == null ? "—" : num(st.sharpe), "",
+        st.n < MIN_STATS_DAYS ? "needs a month of data" : "annualized"),
     );
 
-    // main chart
-    $("chart-title").textContent = `${portName(view)}: cumulative return`;
+    const rebase = (s) => { const b = s[i0]; return s.slice(i0).map((v) => v == null || b == null ? null : v / b - 1); };
+    const color = css(COLOR_VAR[view]);
     const sets = [
-      { label: portName(view), data: rebase(s), borderColor: color, backgroundColor: color, order: 0 },
-      ...D.benchmarks.map((b, k) => ({
-        label: b.name, data: rebase(b.series), borderColor: css(BENCH_STYLE[k % 3].c),
-        backgroundColor: css(BENCH_STYLE[k % 3].c), borderWidth: 1.5,
-        borderDash: BENCH_STYLE[k % 3].dash, order: 1 + k, _style: BENCH_STYLE[k % 3].cls,
-      })),
+      { label: portName(view), data: rebase(series), borderColor: color, backgroundColor: color, order: 0 },
+      ...D.benchmarks.map((b, k) => {
+        const s = BENCH_STYLE[k % 3];
+        return { label: b.name, data: rebase(b.series), borderColor: css(s.c), backgroundColor: css(s.c),
+          borderWidth: 1.5, borderDash: s.dash, order: 1 + k, _cls: s.cls };
+      }),
     ];
-    lineChart($("perf-chart"), "perf", { labels, sets }, { endLbl: true });
-    legend($("legend"), sets.map((d) => ({ label: d.label, color: d.borderColor, cls: d._style })));
+    drawChart(D.dates.slice(i0), sets);
+    $("legend").replaceChildren(...sets.map((d) =>
+      el("span", {}, el("i", { class: d._cls || "", style: `--k:${d.borderColor}` }), d.label)));
 
-    // sleeves comparison (total tab only)
-    $("sleeve-card").hidden = view !== "total";
-    if (view === "total") {
-      const ids = ["total", ...D.portfolios.map((p) => p.id)];
-      const ss = ids.map((id) => ({ label: id === "total" ? "Total" : D.portfolios.find((p) => p.id === id).short,
-        data: rebase(D.series[id]), borderColor: css(COLOR_VAR[id]), backgroundColor: css(COLOR_VAR[id]),
-        borderWidth: id === "total" ? 2.5 : 2 }));
-      lineChart($("sleeve-chart"), "sleeve", { labels, sets: ss }, { endLbl: true });
-      legend($("sleeve-legend"), ss.map((d) => ({ label: d.label, color: d.borderColor })));
-    }
-
-    // drawdown (from the range start)
-    let peak = -Infinity;
-    const dd = s.slice(i0).map((v) => { peak = Math.max(peak, v); return v / peak - 1; });
-    lineChart($("dd-chart"), "dd", { labels, sets: [{ label: portName(view), data: dd, borderColor: color,
-      backgroundColor: color + "26", borderWidth: 1.5 }] }, { yFmt: (v) => pct(v, 0), fill: true });
-
-    // table
-    $("research-card").hidden = view !== "quant";
-    view === "total" ? sleeveTable(i0) : holdingsTable(port);
+    view === "total" ? sleeveTable(i0) : holdingsTable(D.portfolios.find((p) => p.id === view));
   }
 
   function sleeveTable(i0) {
-    $("table-title").textContent = "Allocation by sleeve";
-    const mix = Object.entries(D.asset_mix).map(([k, v]) => `${k} ${pct(v, 1, false)}`).join(" · ");
-    $("table-note").textContent = `Asset mix: ${mix}`;
-    const rLabel = range === "ALL" ? "Since inception" : `Return ${range}`;
-    const head = el("thead", {}, el("tr", {}, ...["Sleeve", "Value", "Weight", "Target", "Drift", rLabel, "Max DD"]
+    $("table-title").textContent = "Where the money is";
+    $("table-note").textContent = "";
+    $("table").className = "";
+    const head = el("thead", {}, el("tr", {}, ...["", "Value", "Weight", "Target", range === "ALL" ? "Since inception" : range]
       .map((h, k) => el("th", { class: k ? "num" : "" }, h))));
     const rows = D.portfolios.map((p) => {
-      const st = stats(D.series[p.id], i0), drift = p.weight_fund - (p.target_weight_fund ?? 0);
+      const st = stats(D.series[p.id], i0);
       return el("tr", {},
         el("td", {}, el("span", { class: "dot", style: `background:${css(COLOR_VAR[p.id])}` }), p.name),
         el("td", { class: "num" }, money(p.value)),
         el("td", { class: "num" }, pct(p.weight_fund, 1, false)),
-        el("td", { class: "num" }, pct(p.target_weight_fund, 1, false)),
-        el("td", { class: "num" }, pct(drift, 1)),
-        el("td", { class: "num " + tone(st.total) }, pct(st.total, 2)),
-        el("td", { class: "num" }, pct(st.mdd, 1)));
+        el("td", { class: "num" }, pct(p.target_weight_fund, 0, false)),
+        el("td", { class: "num " + tone(st.total) }, pct(st.total, 2)));
     });
     const tst = stats(D.series.total, i0);
-    const foot = el("tfoot", {}, el("tr", {}, el("td", {}, "Total Fund"), el("td", { class: "num" }, money(D.fund_value)),
-      el("td", { class: "num" }, "100%"), el("td", { class: "num" }, "100%"), el("td", {}),
-      el("td", { class: "num " + tone(tst.total) }, pct(tst.total, 2)), el("td", { class: "num" }, pct(tst.mdd, 1))));
+    const foot = el("tfoot", {}, el("tr", {}, el("td", {}, "Total"), el("td", { class: "num" }, money(D.fund_value)),
+      el("td", { class: "num" }, "100%"), el("td", { class: "num" }, "100%"),
+      el("td", { class: "num " + tone(tst.total) }, pct(tst.total, 2))));
     $("table").replaceChildren(head, el("tbody", {}, ...rows), foot);
   }
 
   function holdingsTable(p) {
-    $("table-title").textContent = `${p.name} holdings`;
+    $("table-title").textContent = "Holdings";
     const tickers = new Set(p.holdings.map((h) => h.ticker));
     const splits = (D.splits || []).filter((x) => tickers.has(x.ticker))
-      .map((x) => `${x.ticker} ${+x.ratio.toFixed(3)}-for-1 split ${fmtDate(x.date)}`);
-    $("table-note").textContent = [p.description, splits.length ? `Corporate actions: ${splits.join("; ")}.` : ""]
-      .filter(Boolean).join(" ");
-    const color = css(COLOR_VAR[p.id]);
-    const maxW = Math.max(...p.holdings.map((h) => h.weight_portfolio));
-    const head = el("thead", {}, el("tr", {}, ...["Holding", "Shares", "Price", "Value", "Sleeve weight", "Fund weight",
-      "Target", "1 day", "Since held"].map((h, k) => el("th", { class: k ? "num" : "" }, h))));
-    const rows = p.holdings.map((h) => el("tr", {},
-      el("td", {}, el("strong", {}, h.ticker), " ", el("span", { class: "name" }, h.ticker === "CASH" ? "" : h.name)),
-      el("td", { class: "num" }, h.shares == null ? "" : num(h.shares, h.shares % 1 ? 2 : 0)),
-      el("td", { class: "num" }, h.price == null ? "" : num(h.price)),
-      el("td", { class: "num" }, money(h.value)),
-      el("td", { class: "num" }, pct(h.weight_portfolio, 1, false),
-        el("span", { class: "bar", style: `--k:${color};width:${Math.max(2, 48 * h.weight_portfolio / maxW)}px` })),
-      el("td", { class: "num" }, pct(h.weight_fund, 2, false)),
-      el("td", { class: "num" }, h.target_weight_fund == null ? "" : pct(h.target_weight_fund, 2, false)),
-      el("td", { class: "num " + tone(h.return_1d) }, h.ticker === "CASH" ? "" : pct(h.return_1d, 2)),
-      el("td", { class: "num " + tone(h.return_since_held) }, h.ticker === "CASH" ? "" : pct(h.return_since_held, 1))));
+      .map((x) => x.ratio < 1.5
+        ? `${x.ticker} paid a ${+((x.ratio - 1) * 100).toFixed(2)}% stock dividend on ${fmtDate(x.date)}`
+        : `${x.ticker} split ${+x.ratio.toFixed(3)}-for-1 on ${fmtDate(x.date)}`);
+    $("table-note").textContent = splits.length ? splits.join("; ") + "." : "";
+    const head = el("thead", {}, el("tr", {}, ...["", "Shares", "Price", "Value", "Weight", "Return"]
+      .map((h, k) => el("th", { class: k ? "num" : "" }, h))));
+    const rows = p.holdings.map((h) => {
+      const cash = h.ticker === "CASH";
+      return el("tr", {},
+        el("td", {}, el("strong", {}, cash ? "Cash" : h.ticker), " ", el("span", { class: "name" }, cash ? "" : h.name)),
+        el("td", { class: "num" }, cash ? "" : num(h.shares, h.shares % 1 ? 2 : 0)),
+        el("td", { class: "num" }, cash ? "" : num(h.price)),
+        el("td", { class: "num" }, money(h.value)),
+        el("td", { class: "num" }, pct(h.weight_portfolio, 1, false)),
+        el("td", { class: "num " + tone(h.return_since_held) }, cash ? "" : pct(h.return_since_held, 1)));
+    });
     const foot = el("tfoot", {}, el("tr", {}, el("td", {}, "Total"), el("td", {}), el("td", {}),
-      el("td", { class: "num" }, money(p.value)), el("td", { class: "num" }, "100%"),
-      el("td", { class: "num" }, pct(p.weight_fund, 2, false)), el("td", { class: "num" }, pct(p.target_weight_fund, 2, false)),
-      el("td", {}), el("td", {})));
+      el("td", { class: "num" }, money(p.value)), el("td", { class: "num" }, "100%"), el("td", {})));
     $("table").replaceChildren(head, el("tbody", {}, ...rows), foot);
+    $("table").className = "holdings";
   }
 
   // ---------------------------------------------------------------- setup
@@ -302,12 +255,10 @@
 
   function init(data) {
     D = data;
-    $("asof").textContent = `Data as of ${fmtDate(D.as_of)} close · inception ${fmtDate(D.inception_date)}`;
-    $("rf").textContent = pct(D.risk_free_rate, 1, false);
-    $("generated").textContent = `Last built ${new Date(D.generated_at).toLocaleString()}.`;
+    $("asof").textContent = `Updated through the ${fmtDate(D.as_of)} close. Started ${fmtDate(D.inception_date)}.`;
     if (D.placeholder) { $("placeholder-banner").hidden = false; $("placeholder-note").textContent = D.placeholder_note; }
 
-    const tabs = [{ id: "total", name: "Total Fund", w: null }, ...D.portfolios.map((p) => ({ id: p.id, name: p.name, w: p.target_weight_fund }))];
+    const tabs = [{ id: "total", name: "Total Fund" }, ...D.portfolios.map((p) => ({ id: p.id, name: p.name, w: p.target_weight_fund }))];
     $("tabs").replaceChildren(...tabs.map((t) => el("button", {
       class: "tab", role: "tab", "data-id": t.id, style: `--tab-color:var(${COLOR_VAR[t.id]})`,
       onclick: () => setView(t.id),
@@ -319,7 +270,7 @@
 
     const h = location.hash.slice(1);
     setView(tabs.some((t) => t.id === h) ? h : "total", false);
-    window.addEventListener("hashchange", () => {
+    addEventListener("hashchange", () => {
       const k = location.hash.slice(1); if (tabs.some((t) => t.id === k)) setView(k, false);
     });
     matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
@@ -329,5 +280,5 @@
   fetch("data/performance.json", { cache: "no-cache" })
     .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
     .then(init)
-    .catch((e) => { $("asof").textContent = `Could not load performance data (${e.message}).`; });
+    .catch((e) => { $("asof").textContent = `Couldn't load the performance data (${e.message}).`; });
 })();

@@ -5,7 +5,7 @@
   "whole_shares": true,
   "risk_free_rate": 0.04,
   "placeholder": true,
-  "placeholder_note": "Holdings are simulated from the proposal's target weights at an assumed inception date. Replace data/holdings.csv with actual fills and set \"placeholder\" to false in config.json.",
+  "placeholder_note": "These numbers assume we bought our target weights on the start date. We'll switch to our real trades once they're in.",
   "portfolios": [
     {
       "id": "quant",
