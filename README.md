@@ -37,10 +37,10 @@ list of the fund's positions as held **at the close of that day**:
 
 ```csv
 effective_date,portfolio,ticker,shares,target_weight
-2026-09-02,quant,QQQ,13,
-2026-09-02,esg,ESGV,110,
-2026-09-02,analyst,LEN,29,
-2026-09-02,quant,CASH,1072.15,
+2026-11-01,quant,QQQ,13,
+2026-11-01,esg,ESGV,110,
+2026-11-01,analyst,LEN,29,
+2026-11-01,quant,CASH,1072.15,
 ```
 
 - `portfolio` is one of `quant`, `esg`, `analyst` (defined in `config.json`).
@@ -61,7 +61,7 @@ class) so it gets a proper name on the page.
 ### Going live
 
 The repo currently ships **simulated** holdings: target weights sized at an assumed
-inception date of 2026-09-02 with $150,000. When the fund is funded:
+inception date of 2026-11-01 with $150,000. When the fund is funded:
 
 1. Set `inception_date` and `initial_capital` in `config.json`.
 2. Replace `data/holdings.csv` with the real filled share counts and cash, dated on the
