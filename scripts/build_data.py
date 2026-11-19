@@ -43,7 +43,11 @@ def log(msg: str) -> None:
 
 # --------------------------------------------------------------------------- prices
 def fetch_prices(tickers: list[str], start: str) -> pd.DataFrame:
-    """Long frame [date, ticker, close, adjclose] from Yahoo, with retries."""
+    """Long frame [date, ticker, close, adjclose, split] from Yahoo, with retries.
+
+    Yahoo back-adjusts `close` for splits (not dividends) and `adjclose` for both.
+    `split` is the split ratio on its ex-date (e.g. 3.0 for 3-for-1), else 0.
+    """
     import yfinance as yf
 
     frames, missing = [], list(tickers)
@@ -54,8 +58,8 @@ def fetch_prices(tickers: list[str], start: str) -> pd.DataFrame:
             time.sleep(5 * attempt)
         log(f"fetching {len(missing)} tickers (attempt {attempt + 1})")
         try:
-            raw = yf.download(missing, start=start, auto_adjust=False, progress=False,
-                              group_by="ticker", threads=True)
+            raw = yf.download(missing, start=start, auto_adjust=False, actions=True,
+                              progress=False, group_by="ticker", threads=True)
         except Exception as e:  # network errors: retry
             log(f"  download error: {e}")
             continue
@@ -63,27 +67,33 @@ def fetch_prices(tickers: list[str], start: str) -> pd.DataFrame:
         for t in missing:
             try:
                 sub = raw[t] if isinstance(raw.columns, pd.MultiIndex) else raw
-                sub = sub[["Close", "Adj Close"]].dropna()
+                if "Stock Splits" not in sub:
+                    sub = sub.assign(**{"Stock Splits": 0.0})
+                sub = sub[["Close", "Adj Close", "Stock Splits"]].dropna(subset=["Close", "Adj Close"])
             except KeyError:
                 sub = pd.DataFrame()
             if sub.empty:
                 still.append(t)
                 continue
-            f = sub.rename(columns={"Close": "close", "Adj Close": "adjclose"}).reset_index()
+            f = sub.rename(columns={"Close": "close", "Adj Close": "adjclose",
+                                    "Stock Splits": "split"}).reset_index()
             f = f.rename(columns={f.columns[0]: "date"})
             f["date"] = pd.to_datetime(f["date"]).dt.strftime("%Y-%m-%d")
             f["ticker"] = t
-            frames.append(f[["date", "ticker", "close", "adjclose"]])
+            f["split"] = f["split"].fillna(0.0)
+            frames.append(f[["date", "ticker", "close", "adjclose", "split"]])
         missing = still
     if missing:
         log(f"WARNING: no fresh prices for {missing}; using cache if available")
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(
-        columns=["date", "ticker", "close", "adjclose"])
+        columns=["date", "ticker", "close", "adjclose", "split"])
 
 
 def load_prices(tickers: list[str], start: str, offline: bool) -> pd.DataFrame:
     cache = pd.read_csv(CACHE, dtype={"date": str}) if CACHE.exists() else pd.DataFrame(
-        columns=["date", "ticker", "close", "adjclose"])
+        columns=["date", "ticker", "close", "adjclose", "split"])
+    if "split" not in cache:
+        cache["split"] = 0.0
     if offline:
         fresh = pd.DataFrame(columns=cache.columns)
     else:
@@ -94,6 +104,7 @@ def load_prices(tickers: list[str], start: str, offline: bool) -> pd.DataFrame:
     prices = pd.concat([keep, fresh], ignore_index=True)
     prices = prices[prices["ticker"].isin(tickers) & (prices["date"] >= start)]
     prices = prices.sort_values(["ticker", "date"]).drop_duplicates(["ticker", "date"], keep="last")
+    prices["split"] = prices["split"].fillna(0.0)
     prices.to_csv(CACHE, index=False, float_format="%.6f")
     absent = sorted(set(tickers) - set(prices["ticker"]))
     if absent:
@@ -166,8 +177,19 @@ def run(offline: bool = False) -> None:
     start = (pd.Timestamp(inception) - pd.Timedelta(days=7)).strftime("%Y-%m-%d")
     prices = load_prices(tickers, start, offline)
 
-    close = prices.pivot(index="date", columns="ticker", values="close").sort_index().ffill()
     adj = prices.pivot(index="date", columns="ticker", values="adjclose").sort_index().ffill()
+    # Yahoo's `close` is back-adjusted for splits. Undo that so prices are as
+    # traded on each day and share counts in holdings.csv mean what they say:
+    # as-traded close_t = split-adjusted close_t x product of split ratios after t.
+    split = prices.pivot(index="date", columns="ticker", values="split").sort_index()
+    split = split.reindex(adj.index).fillna(0.0)
+    ratio = split.where(split > 0, 1.0)
+    later = ratio[::-1].cumprod()[::-1].shift(-1).fillna(1.0)   # splits strictly after t
+    close = (prices.pivot(index="date", columns="ticker", values="close").sort_index()
+             .reindex(adj.index) * later).ffill()
+    split_events = [{"ticker": t, "date": d, "ratio": float(split.at[d, t])}
+                    for t in split.columns for d in split.index
+                    if split.at[d, t] > 0 and d >= inception and t in holdings["ticker"].values]
     # trading calendar = days the primary benchmark (or SPY) traded, from inception
     cal_ticker = "SPY" if "SPY" in close else bench[0]["ticker"]
     dates = [d for d in close.index if d >= inception and not pd.isna(close.at[d, cal_ticker])]
@@ -218,6 +240,12 @@ def run(offline: bool = False) -> None:
                 idx[pid].append(idx[pid][-1] * (1 + ret))
             tot = sum(num.values()) / sum(den.values()) if sum(den.values()) else 0.0
             idx["total"].append(idx["total"][-1] * (1 + tot))
+            # splits take effect at d's open: holders now own ratio x shares
+            for p in positions:
+                r = 0.0 if p["ticker"] == CASH else split.at[d, p["ticker"]]
+                if r > 0:
+                    p["shares"] *= r
+                    log(f"split {p['ticker']} {r:g}:1 on {d} -> {p['shares']:g} shares")
         # apply any snapshot effective on/before this trading day (after its returns)
         while snap_i < len(snap_dates) and (asof(snap_dates[snap_i]) <= d):
             sd = snap_dates[snap_i]
@@ -303,6 +331,7 @@ def run(offline: bool = False) -> None:
         "portfolios": portfolios_out,
         "asset_mix": {k: v for k, v in sorted(mix.items(), key=lambda kv: -kv[1])},
         "snapshots": snapshots_out,
+        "splits": split_events,
     }
     (DATA / "performance.json").write_text(json.dumps(out, separators=(",", ":")))
     log(f"wrote data/performance.json: {len(dates)} days, as of {last}, "

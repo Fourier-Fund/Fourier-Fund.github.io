@@ -131,6 +131,7 @@ h2 { font-size: 16px; }
 .legend span { display: inline-flex; align-items: center; gap: 6px; }
 .legend i { display: inline-block; width: 16px; height: 0; border-top: 2px solid var(--k); }
 .legend i.dash { border-top-style: dashed; }
+.legend i.dot { border-top-style: dotted; }
 
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: 14px; }

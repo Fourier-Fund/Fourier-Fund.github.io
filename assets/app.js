@@ -8,6 +8,12 @@
     { id: "1M", months: 1 }, { id: "3M", months: 3 }, { id: "6M", months: 6 },
     { id: "YTD" }, { id: "1Y", months: 12 }, { id: "ALL", label: "Since inception" },
   ];
+  // benchmarks are neutral ink; line style tells them apart
+  const BENCH_STYLE = [
+    { c: "--c-bench", dash: [], cls: "" },
+    { c: "--c-bench-2", dash: [4, 3], cls: "dash" },
+    { c: "--c-bench", dash: [1, 3], cls: "dot" },
+  ];
   const MIN_STATS_DAYS = 20; // below this, annualized stats are suppressed
 
   let D, view = "total", range = "ALL";
@@ -156,7 +162,7 @@
 
   function legend(node, items) {
     node.replaceChildren(...items.map((it) =>
-      el("span", {}, el("i", { class: it.dash ? "dash" : "", style: `--k:${it.color}` }), it.label)));
+      el("span", {}, el("i", { class: it.cls || "", style: `--k:${it.color}` }), it.label)));
   }
 
   // ---------------------------------------------------------------- render
@@ -203,13 +209,13 @@
     const sets = [
       { label: portName(view), data: rebase(s), borderColor: color, backgroundColor: color, order: 0 },
       ...D.benchmarks.map((b, k) => ({
-        label: b.name, data: rebase(b.series), borderColor: css(k === 0 ? "--c-bench" : "--c-bench-2"),
-        backgroundColor: css(k === 0 ? "--c-bench" : "--c-bench-2"), borderWidth: 1.5,
-        borderDash: k === 0 ? [] : [4, 3], order: 1 + k,
+        label: b.name, data: rebase(b.series), borderColor: css(BENCH_STYLE[k % 3].c),
+        backgroundColor: css(BENCH_STYLE[k % 3].c), borderWidth: 1.5,
+        borderDash: BENCH_STYLE[k % 3].dash, order: 1 + k, _style: BENCH_STYLE[k % 3].cls,
       })),
     ];
     lineChart($("perf-chart"), "perf", { labels, sets }, { endLbl: true });
-    legend($("legend"), sets.map((d, k) => ({ label: d.label, color: d.borderColor, dash: k > 1 })));
+    legend($("legend"), sets.map((d) => ({ label: d.label, color: d.borderColor, cls: d._style })));
 
     // sleeves comparison (total tab only)
     $("sleeve-card").hidden = view !== "total";
@@ -260,7 +266,11 @@
 
   function holdingsTable(p) {
     $("table-title").textContent = `${p.name} holdings`;
-    $("table-note").textContent = p.description || "";
+    const tickers = new Set(p.holdings.map((h) => h.ticker));
+    const splits = (D.splits || []).filter((x) => tickers.has(x.ticker))
+      .map((x) => `${x.ticker} ${+x.ratio.toFixed(3)}-for-1 split ${fmtDate(x.date)}`);
+    $("table-note").textContent = [p.description, splits.length ? `Corporate actions: ${splits.join("; ")}.` : ""]
+      .filter(Boolean).join(" ");
     const color = css(COLOR_VAR[p.id]);
     const maxW = Math.max(...p.holdings.map((h) => h.weight_portfolio));
     const head = el("thead", {}, el("tr", {}, ...["Holding", "Shares", "Price", "Value", "Sleeve weight", "Fund weight",

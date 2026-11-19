@@ -2,7 +2,7 @@
 
 Performance site for the Fourier Fund quant team. It shows the **Total Fund**, the
 **Quant Team** sleeve (70%), the **ESG / ESGV** sleeve (10%) and the **Analyst Picks**
-sleeve (20%), each against the S&P 500 Total Return Index and SPY.
+sleeve (20%), each against the S&P 500 Total Return Index, SPY and QQQ.
 
 ## How it updates
 
@@ -37,10 +37,10 @@ list of the fund's positions as held **at the close of that day**:
 
 ```csv
 effective_date,portfolio,ticker,shares,target_weight
-2026-11-01,quant,QQQ,13,
-2026-11-01,esg,ESGV,110,
-2026-11-01,analyst,LEN,29,
-2026-11-01,quant,CASH,1072.15,
+2026-10-22,quant,QQQ,13,
+2026-10-22,esg,ESGV,110,
+2026-10-22,analyst,LEN,29,
+2026-10-22,quant,CASH,1072.15,
 ```
 
 - `portfolio` is one of `quant`, `esg`, `analyst` (defined in `config.json`).
@@ -61,7 +61,7 @@ class) so it gets a proper name on the page.
 ### Going live
 
 The repo currently ships **simulated** holdings: target weights sized at an assumed
-inception date of 2026-11-01 with $150,000. When the fund is funded:
+inception date of 2026-10-22 with $150,000. When the fund is funded:
 
 1. Set `inception_date` and `initial_capital` in `config.json`.
 2. Replace `data/holdings.csv` with the real filled share counts and cash, dated on the
@@ -80,6 +80,11 @@ inception date of 2026-11-01 with $150,000. When the fund is funded:
   are hidden until at least 20 trading days exist. Risk-free rate: `risk_free_rate` in
   `config.json`.
 - Trades are assumed to execute at the close of the snapshot date.
+- **Stock splits** are handled automatically. Yahoo back-adjusts historical prices for
+  splits, so the script rebuilds the actual traded prices and multiplies share counts by
+  the split ratio on the ex-date. Enter `shares` in `holdings.csv` as you actually held
+  them on that snapshot date: pre-split counts before a split, post-split counts after.
+  Splits are listed under each sleeve's holdings table (e.g. ITA 3-for-1 on 2026-11-05).
 
 ## Running locally
 
